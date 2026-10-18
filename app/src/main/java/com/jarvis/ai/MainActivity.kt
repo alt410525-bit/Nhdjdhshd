@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.AlertDialog
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.Typeface
 import android.os.Bundle
 import android.text.InputType
 import android.view.Gravity
@@ -19,17 +20,23 @@ import kotlinx.coroutines.withContext
 
 class MainActivity : AppCompatActivity() {
 
+    private val accent = "#00E5FF"
+    private val panel = "#0A1A2A"
+    private val bg = "#05080F"
+
     private lateinit var chatContainer: LinearLayout
     private lateinit var scroll: ScrollView
     private lateinit var input: EditText
     private lateinit var sendBtn: Button
     private lateinit var micBtn: Button
+    private lateinit var modeBtn: Button
     private lateinit var speakToggle: CheckBox
     private lateinit var statusText: TextView
 
     private lateinit var voiceInput: VoiceInput
     private lateinit var voiceOutput: VoiceOutput
     private var busy = false
+    private var codingMode = false
 
     private val rememberRegex = Regex("^(yaad rakho|remember)[:,\\s]*(.+)$", RegexOption.IGNORE_CASE)
 
@@ -52,7 +59,7 @@ class MainActivity : AppCompatActivity() {
         if (saved.isEmpty()) {
             addBubble(
                 "model",
-                "Namaste! Main ${Prefs.getPersona(this)} hoon, aapki AI assistant. Main ek AI hoon, insaan nahi. Jo bhi aap batayenge, main phone par yaad rakhungi (sensitive baat ke liye pehle poochungi).\n\nMic button dabakar bolo, ya type karo."
+                "Namaste! Main ${Prefs.getPersona(this)} hoon, aapki AI assistant. Main ek AI hoon, insaan nahi. Jo bhi aap batayenge, main phone par yaad rakhungi (sensitive baat ke liye pehle poochungi).\n\nMic dabakar bolo, ya type karo. Coding ke liye Mode ko Code par rakho."
             )
         } else {
             for ((role, text) in saved.takeLast(50)) addBubble(role, text)
@@ -65,44 +72,86 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
+    private fun styledButton(label: String, onClick: () -> Unit): Button =
+        Button(this).apply {
+            text = label
+            setTextColor(Color.parseColor(accent))
+            setBackgroundColor(Color.parseColor(panel))
+            setOnClickListener { onClick() }
+        }
+
     private fun buildUi() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#F5F7FA"))
+            setBackgroundColor(Color.parseColor(bg))
         }
 
+        // Top bar
         val top = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(Color.parseColor("#1565C0"))
+            setBackgroundColor(Color.parseColor(panel))
             setPadding(32, 40, 16, 24)
         }
         val title = TextView(this).apply {
-            text = Prefs.getPersona(this@MainActivity)
+            text = Prefs.getPersona(this@MainActivity).uppercase()
             textSize = 20f
-            setTextColor(Color.WHITE)
+            setTextColor(Color.parseColor(accent))
+            typeface = Typeface.DEFAULT_BOLD
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
-        val memoryBtn = Button(this).apply {
-            text = "Memory"
-            setOnClickListener { showMemory() }
-        }
-        val settingsBtn = Button(this).apply {
-            text = "Settings"
-            setOnClickListener { showSettings() }
-        }
         top.addView(title)
-        top.addView(memoryBtn)
-        top.addView(settingsBtn)
+        top.addView(styledButton("Memory") { showMemory() })
+        top.addView(styledButton("Settings") { showSettings() })
         root.addView(top)
 
         statusText = TextView(this).apply {
             textSize = 12f
             setPadding(32, 8, 32, 8)
-            setTextColor(Color.DKGRAY)
+            setTextColor(Color.parseColor(accent))
         }
         root.addView(statusText)
 
+        // Input row ab upar hai
+        val inputRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(16, 8, 16, 8)
+        }
+        micBtn = styledButton("Mic") { onMicTapped() }
+        input = EditText(this).apply {
+            hint = "${Prefs.getPersona(this@MainActivity)} se baat karo..."
+            setHintTextColor(Color.GRAY)
+            setTextColor(Color.WHITE)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        sendBtn = styledButton("Send") { onSend() }
+        inputRow.addView(micBtn)
+        inputRow.addView(input)
+        inputRow.addView(sendBtn)
+        root.addView(inputRow)
+
+        // Mode aur speak toggle
+        val optionRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(16, 0, 16, 8)
+        }
+        modeBtn = styledButton("Mode: Chat") {
+            codingMode = !codingMode
+            modeBtn.text = if (codingMode) "Mode: Code" else "Mode: Chat"
+            statusText.text = if (codingMode) "Coding mode on" else "Chat mode on"
+        }
+        speakToggle = CheckBox(this).apply {
+            text = "Jawab bolkar sunao"
+            isChecked = true
+            setTextColor(Color.parseColor(accent))
+        }
+        optionRow.addView(modeBtn)
+        optionRow.addView(speakToggle)
+        root.addView(optionRow)
+
+        // Chat area neeche
         scroll = ScrollView(this).apply {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
             isFillViewport = true
@@ -114,36 +163,64 @@ class MainActivity : AppCompatActivity() {
         scroll.addView(chatContainer)
         root.addView(scroll)
 
-        speakToggle = CheckBox(this).apply {
-            text = "Jawab bolkar sunao"
-            isChecked = true
-            setPadding(32, 0, 32, 0)
-        }
-        root.addView(speakToggle)
-
-        val inputRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(16, 8, 16, 16)
-        }
-        micBtn = Button(this).apply {
-            text = "Mic"
-            setOnClickListener { onMicTapped() }
-        }
-        input = EditText(this).apply {
-            hint = "${Prefs.getPersona(this@MainActivity)} se baat karo..."
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        }
-        sendBtn = Button(this).apply {
-            text = "Send"
-            setOnClickListener { onSend() }
-        }
-        inputRow.addView(micBtn)
-        inputRow.addView(input)
-        inputRow.addView(sendBtn)
-        root.addView(inputRow)
-
         setContentView(root)
+    }
+
+    private fun textView(text: String, color: String, mono: Boolean = false): TextView =
+        TextView(this).apply {
+            this.text = text
+            textSize = 16f
+            setTextColor(Color.parseColor(color))
+            if (mono) typeface = Typeface.MONOSPACE
+        }
+
+    private fun codeView(seg: CodeBlocks.Segment): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#000000"))
+            setPadding(20, 12, 20, 12)
+            addView(TextView(this@MainActivity).apply {
+                text = if (seg.lang.isEmpty()) "code" else seg.lang
+                textSize = 11f
+                setTextColor(Color.parseColor(accent))
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = seg.text
+                textSize = 13f
+                typeface = Typeface.MONOSPACE
+                setTextColor(Color.parseColor("#B2EBF2"))
+            })
+            addView(Button(this@MainActivity).apply {
+                text = "Copy"
+                setTextColor(Color.parseColor(accent))
+                setOnClickListener { CodeBlocks.copy(this@MainActivity, seg.text) }
+            })
+        }
+
+    private fun addBubble(role: String, text: String) {
+        val isUser = role == "user"
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor(if (isUser) "#0E3A4F" else "#0D1B2A"))
+            setPadding(28, 18, 28, 18)
+            layoutParams = LinearLayout.LayoutParams(
+                if (isUser) LinearLayout.LayoutParams.WRAP_CONTENT else LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                setMargins(0, 8, 0, 8)
+                gravity = if (isUser) Gravity.END else Gravity.START
+            }
+        }
+        if (isUser) {
+            box.addView(textView(text, "#E0F7FA"))
+        } else {
+            for (seg in CodeBlocks.split(text)) {
+                if (seg.isCode) box.addView(codeView(seg))
+                else box.addView(textView(seg.text, "#D6F4FF"))
+            }
+        }
+        chatContainer.addView(box)
+        scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
     }
 
     private fun onMicTapped() {
@@ -176,27 +253,6 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    private fun addBubble(role: String, text: String) {
-        val tv = TextView(this).apply {
-            this.text = text
-            textSize = 16f
-            setPadding(32, 20, 32, 20)
-            setTextColor(if (role == "user") Color.WHITE else Color.BLACK)
-            setBackgroundColor(
-                if (role == "user") Color.parseColor("#1565C0") else Color.parseColor("#E3EAF5")
-            )
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                setMargins(0, 8, 0, 8)
-                gravity = if (role == "user") Gravity.END else Gravity.START
-            }
-        }
-        chatContainer.addView(tv)
-        scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
-    }
-
     private fun onSend() {
         if (busy) return
         val text = input.text.toString().trim()
@@ -223,7 +279,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun process(text: String, persist: Boolean) {
-        // "yaad rakho: ..." wali baat alag fact ke roop mein save karo
         rememberRegex.find(text)?.groupValues?.get(2)?.let { fact ->
             if (persist) {
                 MemoryStore.addFact(this, fact)
@@ -255,7 +310,7 @@ class MainActivity : AppCompatActivity() {
                 if (persist) MemoryStore.appendChat(this@MainActivity, "model", reply)
                 statusText.text = "Connected: $model"
                 if (speakToggle.isChecked) {
-                    voiceOutput.speak(reply) {
+                    voiceOutput.speak(CodeBlocks.spokenText(reply)) {
                         runOnUiThread { if (!busy) statusText.text = "Connected: $model" }
                     }
                 }
@@ -276,13 +331,25 @@ class MainActivity : AppCompatActivity() {
             "\n\nUser ke baare mein jo yaad hai (is info ko naturally use karo, par bar-bar mat dohrao):\n" +
                     facts.joinToString("\n") { "- ${it.text}" }
 
-        return """
+        val base = """
             Tum $name ho, ek warm, intelligent aur helpful AI assistant.
             Tum hamesha yeh saaf rakhte ho ki tum ek AI ho, insaan nahi.
             User jo bhasha mein baat kare (Hindi, Hinglish ya English), usi mein jawab do.
             Chhote, natural, saaf jawab do. Zarurat ho to hi lamba likho.
             Medical, legal ya financial sawaalon par general jaankari do aur professional se milne ki salah do.
-        """.trimIndent() + memoryBlock
+        """.trimIndent()
+
+        val coding = if (!codingMode) "" else """
+
+            CODING MODE ON:
+            - Code hamesha markdown code block mein do, language ke naam ke saath (jaise ```kotlin).
+            - Agar multiple files hain to har file se pehle uska poora path likho.
+            - Beginner ki bhasha mein short explanation do.
+            - Tum code compile ya run nahi kar sakti, isliye agar user ne error diya ho to uska sabab aur fix batao, aur ye bhi bolo ki fix test karna user ka kaam hai.
+            - Kabhi bhi ye mat kaho ki code test ho chuka hai.
+        """.trimIndent()
+
+        return base + coding + memoryBlock
     }
 
     // ---------- Memory viewer ----------
@@ -359,7 +426,7 @@ class MainActivity : AppCompatActivity() {
                 MemoryStore.clearFacts(this)
                 MemoryStore.clearChat(this)
                 chatContainer.removeAllViews()
-                addBubble("model", "Sab kuch bhool gayi. Naye sire se shuru karte hain.")
+                addBubble("model", "Sab kuch bhool gaya. Naye sire se shuru karte hain.")
                 statusText.text = "Memory clear ho gayi"
             }
             .setNegativeButton("Nahi", null)
