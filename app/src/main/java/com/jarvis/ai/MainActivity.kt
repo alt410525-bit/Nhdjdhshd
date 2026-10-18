@@ -1,13 +1,17 @@
 package com.jarvis.ai
 
+import android.Manifest
 import android.app.AlertDialog
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Bundle
 import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.widget.*
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -20,16 +24,38 @@ class MainActivity : AppCompatActivity() {
     private lateinit var scroll: ScrollView
     private lateinit var input: EditText
     private lateinit var sendBtn: Button
+    private lateinit var micBtn: Button
+    private lateinit var speakToggle: CheckBox
     private lateinit var statusText: TextView
+
+    private lateinit var voiceInput: VoiceInput
+    private lateinit var voiceOutput: VoiceOutput
     private var busy = false
+
+    private val micPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) startListening()
+        else statusText.text = "Mic permission nahi mili. Settings se allow karo."
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         buildUi()
+        voiceInput = VoiceInput(this)
+        voiceOutput = VoiceOutput(this) { hi ->
+            if (!hi) statusText.text = "Hindi voice nahi mili, English mein bolunga. Google TTS mein Hindi voice download karo."
+        }
         addBubble(
             "assistant",
-            "Namaste! Main ${Prefs.getPersona(this)} hoon, aapki AI assistant. Main ek AI hoon, insaan nahi. Hindi, Hinglish ya English mein baat kar sakte ho.\n\nAgar pehli baar hai, to Settings mein apni Gemini API key daal do."
+            "Namaste! Main ${Prefs.getPersona(this)} hoon, aapki AI assistant. Main ek AI hoon, insaan nahi. Hindi, Hinglish ya English mein baat kar sakte ho.\n\nMic button dabakar bolo, ya type karo."
         )
+    }
+
+    override fun onDestroy() {
+        voiceInput.release()
+        voiceOutput.shutdown()
+        super.onDestroy()
     }
 
     private fun buildUi() {
@@ -76,10 +102,21 @@ class MainActivity : AppCompatActivity() {
         scroll.addView(chatContainer)
         root.addView(scroll)
 
+        speakToggle = CheckBox(this).apply {
+            text = "Jawab bolkar sunao"
+            isChecked = true
+            setPadding(32, 0, 32, 0)
+        }
+        root.addView(speakToggle)
+
         val inputRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(16, 8, 16, 16)
+        }
+        micBtn = Button(this).apply {
+            text = "Mic"
+            setOnClickListener { onMicTapped() }
         }
         input = EditText(this).apply {
             hint = "${Prefs.getPersona(this@MainActivity)} se baat karo..."
@@ -89,11 +126,42 @@ class MainActivity : AppCompatActivity() {
             text = "Send"
             setOnClickListener { onSend() }
         }
+        inputRow.addView(micBtn)
         inputRow.addView(input)
         inputRow.addView(sendBtn)
         root.addView(inputRow)
 
         setContentView(root)
+    }
+
+    private fun onMicTapped() {
+        if (busy) return
+        val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED
+        if (granted) startListening() else micPermission.launch(Manifest.permission.RECORD_AUDIO)
+    }
+
+    private fun startListening() {
+        if (!voiceInput.isAvailable()) {
+            statusText.text = "Is phone par speech recognition nahi hai."
+            return
+        }
+        voiceOutput.stop()
+        micBtn.isEnabled = false
+        statusText.text = "Sun raha hoon... bolo"
+
+        voiceInput.start(
+            onPartial = { partial -> input.setText(partial) },
+            onResult = { text ->
+                micBtn.isEnabled = true
+                input.setText(text)
+                onSend()
+            },
+            onError = { msg ->
+                micBtn.isEnabled = true
+                statusText.text = msg
+            }
+        )
     }
 
     private fun addBubble(role: String, text: String) {
@@ -147,6 +215,11 @@ class MainActivity : AppCompatActivity() {
                 }
                 addBubble("assistant", reply)
                 statusText.text = "Connected: $model"
+                if (speakToggle.isChecked) {
+                    voiceOutput.speak(reply) {
+                        runOnUiThread { if (!busy) statusText.text = "Connected: $model" }
+                    }
+                }
             } catch (e: Exception) {
                 addBubble("assistant", "Error: ${e.message}")
                 statusText.text = "Error aaya"
