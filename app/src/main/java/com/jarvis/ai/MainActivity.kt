@@ -29,14 +29,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var input: EditText
     private lateinit var sendBtn: Button
     private lateinit var micBtn: Button
-    private lateinit var modeBtn: Button
     private lateinit var speakToggle: CheckBox
     private lateinit var statusText: TextView
 
     private lateinit var voiceInput: VoiceInput
     private lateinit var voiceOutput: VoiceOutput
     private var busy = false
-    private var codingMode = false
 
     private val rememberRegex = Regex("^(yaad rakho|remember)[:,\\s]*(.+)$", RegexOption.IGNORE_CASE)
 
@@ -59,7 +57,7 @@ class MainActivity : AppCompatActivity() {
         if (saved.isEmpty()) {
             addBubble(
                 "model",
-                "Namaste! Main ${Prefs.getPersona(this)} hoon, aapki AI assistant. Main ek AI hoon, insaan nahi. Jo bhi aap batayenge, main phone par yaad rakhungi (sensitive baat ke liye pehle poochungi).\n\nMic dabakar bolo, ya type karo. Coding ke liye Mode ko Code par rakho."
+                "Namaste! Main ${Prefs.getPersona(this)} hoon, aapki AI assistant. Main ek AI hoon, insaan nahi. Chat karo, bolo, ya command do jaise \"YouTube kholo\", \"YouTube par gaana search karo\", \"7 baje alarm laga\", \"5 minute ka timer\"."
             )
         } else {
             for ((role, text) in saved.takeLast(50)) addBubble(role, text)
@@ -86,7 +84,6 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(Color.parseColor(bg))
         }
 
-        // Top bar
         val top = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -112,7 +109,6 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(statusText)
 
-        // Input row ab upar hai
         val inputRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -131,27 +127,14 @@ class MainActivity : AppCompatActivity() {
         inputRow.addView(sendBtn)
         root.addView(inputRow)
 
-        // Mode aur speak toggle
-        val optionRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(16, 0, 16, 8)
-        }
-        modeBtn = styledButton("Mode: Chat") {
-            codingMode = !codingMode
-            modeBtn.text = if (codingMode) "Mode: Code" else "Mode: Chat"
-            statusText.text = if (codingMode) "Coding mode on" else "Chat mode on"
-        }
         speakToggle = CheckBox(this).apply {
             text = "Jawab bolkar sunao"
             isChecked = true
             setTextColor(Color.parseColor(accent))
+            setPadding(32, 0, 32, 8)
         }
-        optionRow.addView(modeBtn)
-        optionRow.addView(speakToggle)
-        root.addView(optionRow)
+        root.addView(speakToggle)
 
-        // Chat area neeche
         scroll = ScrollView(this).apply {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
             isFillViewport = true
@@ -257,13 +240,24 @@ class MainActivity : AppCompatActivity() {
         if (busy) return
         val text = input.text.toString().trim()
         if (text.isEmpty()) return
+        input.setText("")
+
+        // Pehle app/alarm/timer commands check karo (Gemini ki zaroorat nahi)
+        val auto = Automation.handle(this, text)
+        if (auto.handled) {
+            addBubble("user", text)
+            addBubble("model", auto.reply)
+            MemoryStore.appendChat(this, "user", text)
+            MemoryStore.appendChat(this, "model", auto.reply)
+            statusText.text = "Command chala"
+            if (speakToggle.isChecked) voiceOutput.speak(auto.reply)
+            return
+        }
 
         if (Prefs.getApiKey(this).isEmpty()) {
             addBubble("model", "Pehle Settings mein Gemini API key daal do.")
             return
         }
-
-        input.setText("")
 
         if (MemoryStore.isSensitive(text)) {
             AlertDialog.Builder(this)
@@ -331,25 +325,15 @@ class MainActivity : AppCompatActivity() {
             "\n\nUser ke baare mein jo yaad hai (is info ko naturally use karo, par bar-bar mat dohrao):\n" +
                     facts.joinToString("\n") { "- ${it.text}" }
 
-        val base = """
+        return """
             Tum $name ho, ek warm, intelligent aur helpful AI assistant.
             Tum hamesha yeh saaf rakhte ho ki tum ek AI ho, insaan nahi.
             User jo bhasha mein baat kare (Hindi, Hinglish ya English), usi mein jawab do.
             Chhote, natural, saaf jawab do. Zarurat ho to hi lamba likho.
+            Jab user code, program ya website maange, to code hamesha markdown code block mein do (```kotlin jaise language ke saath), aur beginner ki bhasha mein short explanation do.
+            Tum code compile ya run nahi kar sakti, isliye fix ko user ko khud test karna hoga. Kabhi mat kaho ki code test ho chuka hai.
             Medical, legal ya financial sawaalon par general jaankari do aur professional se milne ki salah do.
-        """.trimIndent()
-
-        val coding = if (!codingMode) "" else """
-
-            CODING MODE ON:
-            - Code hamesha markdown code block mein do, language ke naam ke saath (jaise ```kotlin).
-            - Agar multiple files hain to har file se pehle uska poora path likho.
-            - Beginner ki bhasha mein short explanation do.
-            - Tum code compile ya run nahi kar sakti, isliye agar user ne error diya ho to uska sabab aur fix batao, aur ye bhi bolo ki fix test karna user ka kaam hai.
-            - Kabhi bhi ye mat kaho ki code test ho chuka hai.
-        """.trimIndent()
-
-        return base + coding + memoryBlock
+        """.trimIndent() + memoryBlock
     }
 
     // ---------- Memory viewer ----------
